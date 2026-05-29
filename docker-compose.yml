@@ -12,9 +12,17 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
 
   app:
-    image: ghcr.io/yaquelin2305/tickets-app-cicd/tickets-app:${IMAGE_TAG:-latest}
+    image: ghcr.io/maria0412/evaluacion_2/tickets-app:${IMAGE_TAG:-latest}
     ports:
       - "8081:8081"
     environment:
@@ -24,6 +32,14 @@ services:
     depends_on:
       tickets_db:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
 
 volumes:
   postgres_data:
