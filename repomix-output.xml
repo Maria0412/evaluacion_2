@@ -41,9 +41,12 @@ The content is organized as follows:
 
 <directory_structure>
 .gitattributes
+.github/dependabot.yml
 .github/workflows/ci.yml
 .gitignore
 .mvn/wrapper/maven-wrapper.properties
+docker-compose.yml
+Dockerfile
 mvnw
 mvnw.cmd
 pom.xml
@@ -65,6 +68,10 @@ src/main/java/com/tickets/infrastructure/repository/JpaTicketRepository.java
 src/main/java/com/tickets/infrastructure/repository/UserRepository.java
 src/main/java/com/tickets/TicketsApplication.java
 src/main/resources/application.properties
+src/test/java/com/tickets/application/usecase/CreateTicketUseCaseTest.java
+src/test/java/com/tickets/application/usecase/GetTicketUseCaseTest.java
+src/test/java/com/tickets/domain/model/TicketTest.java
+src/test/java/com/tickets/entrypoints/controller/TicketControllerTest.java
 src/test/java/com/tickets/TicketsApplicationTests.java
 </directory_structure>
 
@@ -74,43 +81,6 @@ This section contains the contents of the repository's files.
 <file path=".gitattributes">
 /mvnw text eol=lf
 *.cmd text eol=crlf
-</file>
-
-<file path=".github/workflows/ci.yml">
-name: Java CI con Maven
-
-on:
-  push:
-    branches: [ "develop" ]
-  pull_request:
-    branches: [ "main" ]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout del codigo
-        uses: actions/checkout@v4
-
-      - name: Configurar JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: Dar permisos de ejecucion al wrapper
-        run: chmod +x mvnw
-
-      - name: Compilar proyecto (Omitiendo tests de BD)
-        run: ./mvnw clean package -DskipTests
-
-      - name: Subir artefacto
-        uses: actions/upload-artifact@v4
-        with:
-          name: tickets-app
-          path: target/*.jar
 </file>
 
 <file path=".gitignore">
@@ -153,6 +123,42 @@ build/
 wrapperVersion=3.3.4
 distributionType=only-script
 distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.12/apache-maven-3.9.12-bin.zip
+</file>
+
+<file path="Dockerfile">
+FROM maven:3.9.8-eclipse-temurin-17-alpine AS build
+WORKDIR /app
+
+
+COPY pom.xml .
+
+
+RUN mvn dependency:go-offline -B
+
+
+COPY src ./src
+
+
+RUN mvn clean package -DskipTests
+
+ 
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+
+RUN addgroup -S devopsgroup && adduser -S devopsuser -G devopsgroup
+USER devopsuser
+
+
+COPY --from=build /app/target/*.jar app.jar
+
+
+EXPOSE 8081
+
+
+ENV DB_URL=jdbc:postgresql://tickets_db:5432/tickets_db
+
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
 </file>
 
 <file path="mvnw">
@@ -719,90 +725,36 @@ Write-Output "MVN_CMD=$MAVEN_HOME/bin/$MVN_CMD"
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
 
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>3.11.0.3922</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
         </plugins>
     </build>
 
 </project>
-</file>
-
-<file path="README.md">
-# 🎟️ Microservicio de Tickets - Capa DevOps Avanzada
-
-Este repositorio contiene el **Microservicio de Tickets** desarrollado en Java 17 con Spring Boot bajo una Arquitectura Hexagonal. En esta segunda etapa del proyecto, se ha implementado un ciclo completo de **Integración Continua (CI)** y **Entrega Continua (CD)** automatizado a través de **GitHub Actions**, incorporando prácticas avanzadas de contenerización, análisis estático de código y gobernanza de seguridad.
-
----
-
-## 🚀 1. Arquitectura del Pipeline de CI/CD
-
-El flujo automatizado se encuentra configurado en el archivo `.github/workflows/ci-cd.yml` y se activa de manera automática ante cada evento de `push` en la rama principal (`main`). 
-
-El pipeline está diseñado de forma secuencial mediante el uso de dependencias (`needs`), garantizando que la aplicación solo avance si cumple estrictamente con las políticas de calidad y seguridad establecidas.
-
-### 📊 Diagrama del Flujo Automatizado
-[ Push en Main ]
-│
-▼
-┌──────────────┐
-│    Stage 1   │
-│ Test & Sonar │ ──► (Si las Pruebas o el Quality Gate fallan, el flujo SE BLOQUEA)
-└──────────────┘
-│ (Success)
-▼
-┌──────────────┐
-│    Stage 2   │
-│ Build Docker │ ──► (Genera la Imagen Multi-stage y la taguea con el SHA de Git)
-└──────────────┘
-│ (Success)
-▼
-┌──────────────┐
-│    Stage 3   │
-│ Deploy App   │ ──► (Orquesta el entorno simulado levantando la app y PostgreSQL)
-└──────────────┘
-
-## 🛠️ 2. Descripción de las Etapas del Pipeline
-
-### 🧪 Etapa 1: Análisis de Calidad y Pruebas Unitarias (`sonar`)
-* **Propósito:** Validar la estabilidad del código y asegurar que no existan regresiones.
-* **Mecanismo:** Se configuran las dependencias del entorno virtual usando Java 17 (Temurin). Se ejecutan de manera automatizada las pruebas unitarias a través del comando `mvn verify sonar:sonar`.
-* **Gobernanza y Bloqueo:** Los resultados son enviados directamente a **SonarCloud** (SonarQube en la nube). El pipeline está configurado de manera **bloqueante**; si las pruebas fallan o si el código no supera los umbrales de seguridad mínimos exigidos por la plataforma, el flujo se interrumpe inmediatamente para proteger la estabilidad del software.
-
-### 🐳 Etapa 2: Contenerización y Empaquetado (`build-image`)
-* **Propósito:** Aislar la aplicación y sus dependencias para garantizar su portabilidad en la nube.
-* **Mecanismo:** Utiliza un archivo `Dockerfile` basado en una estrategia de **Construcción Multi-etapa (Multi-stage build)**:
-  1. *Etapa de Compilación:* Usa una imagen de Maven para empaquetar el código fuente y compilar el archivo `.jar`.
-  2. *Etapa de Ejecución:* Migra únicamente el artefacto final a una imagen base ligera de Java JRE basada en Alpine Linux, optimizando el tamaño y eliminando herramientas innecesarias para reducir la superficie de ataques.
-* **Publicación:** La imagen resultante es almacenada de forma segura en **GitHub Packages** (`ghcr.io`).
-
-### 📦 Etapa 3: Orquestación y Despliegue Simulado (`deploy`)
-* **Propósito:** Desplegar de forma automatizada y controlada la solución tecnológica completa.
-* **Mecanismo:** Mediante **Docker Compose**, el pipeline simula un entorno productivo en la nube levantando simultáneamente dos contenedores interconectados en una red aislada:
-  1. `tickets_app`: El microservicio contenedorizado expuesto en el puerto `8081`.
-  2. `tickets_db`: Un motor de base de datos PostgreSQL (`postgres:15-alpine`) requerido para la persistencia.
-* **Estabilidad y Escalabilidad:** El archivo `docker-compose.yml` incorpora límites estrictos de recursos de hardware (restricciones de CPU y Memoria RAM por contenedor) y políticas de reinicio ante fallos (`restart_policy`), asegurando la resiliencia de la infraestructura.
-
----
-
-## 🔍 3. Estrategia de Trazabilidad Total
-
-Para cumplir con las máximas exigencias de gobernanza, el pipeline implementa un mecanismo de **Trazabilidad de Extremo a Extremo** mediante el uso del ID único del commit de Git (`${{ github.sha }}`):
-
-1. Cada vez que se construye la imagen Docker en GitHub Actions, esta es etiquetada (tagueada) con el código alfanumérico exacto del commit que originó el cambio.
-2. Durante la etapa de despliegue, el pipeline inyecta esta etiqueta en el entorno.
-3. Esto permite a los administradores de sistemas y equipos de QA rastrear cualquier contenedor en ejecución en la nube y saber con absoluta certeza física qué línea de código exacta, qué autor y qué cambios originaron la versión que está corriendo en producción.
-
----
-
-## ⚙️ 4. Requisitos para la Ejecución Local
-
-Si deseas probar la infraestructura de contenedores de manera local en tu máquina, clona el repositorio y asegúrate de contar con Docker instalado. Luego, ejecuta en la raíz:
-
-```bash
-# Construir las imágenes locales y levantar la solución completa
-docker-compose up -d --build
-
-# Verificar el estado de los contenedores y límites de recursos
-docker ps
-docker stats
 </file>
 
 <file path="src/main/java/com/tickets/application/usecase/CreateTicketUseCase.java">
@@ -1261,6 +1213,190 @@ spring.jpa.show-sql=true
 spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
 </file>
 
+<file path="src/test/java/com/tickets/application/usecase/CreateTicketUseCaseTest.java">
+package com.tickets.application.usecase;
+
+import com.tickets.domain.model.Ticket;
+import com.tickets.domain.ports.NotificationService;
+import com.tickets.domain.ports.TicketRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class CreateTicketUseCaseTest {
+
+    @Mock
+    private TicketRepository repository;
+
+    @Mock
+    private NotificationService notificationService;
+
+    @InjectMocks
+    private CreateTicketUseCase createTicketUseCase;
+
+    @Test
+    void debeCrearTicketConEstadoAbierto() {
+        Long id = 1L;
+        String descripcion = "Fallo en el sistema de pagos";
+
+        Ticket result = createTicketUseCase.createTicket(id, descripcion);
+
+        assertNotNull(result);
+        assertEquals(id, result.getId());
+        assertEquals(descripcion, result.getDescripcion());
+        assertEquals("ABIERTO", result.getEstado());
+    }
+
+    @Test
+    void debeGuardarTicketYNotificar() {
+        Long id = 1L;
+        String descripcion = "Fallo en el sistema de pagos";
+
+        createTicketUseCase.createTicket(id, descripcion);
+
+        verify(repository, times(1)).save(any(Ticket.class));
+        verify(notificationService, times(1)).sendNotification("Ticket creado con ID " + id);
+    }
+}
+</file>
+
+<file path="src/test/java/com/tickets/application/usecase/GetTicketUseCaseTest.java">
+package com.tickets.application.usecase;
+
+import com.tickets.domain.model.Ticket;
+import com.tickets.domain.ports.TicketRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class GetTicketUseCaseTest {
+
+    @Mock
+    private TicketRepository repository;
+
+    @InjectMocks
+    private GetTicketUseCase getTicketUseCase;
+
+    @Test
+    void debeRetornarTicketCuandoExiste() {
+        Ticket expected = new Ticket(1L, "Error en login", "ABIERTO");
+        when(repository.findById(1L)).thenReturn(expected);
+
+        Ticket result = getTicketUseCase.getTicket(1L);
+
+        assertNotNull(result);
+        assertEquals(1L, result.getId());
+        assertEquals("Error en login", result.getDescripcion());
+        assertEquals("ABIERTO", result.getEstado());
+        verify(repository, times(1)).findById(1L);
+    }
+
+    @Test
+    void debeRetornarNullCuandoNoExiste() {
+        when(repository.findById(99L)).thenReturn(null);
+
+        Ticket result = getTicketUseCase.getTicket(99L);
+
+        assertNull(result);
+        verify(repository, times(1)).findById(99L);
+    }
+}
+</file>
+
+<file path="src/test/java/com/tickets/domain/model/TicketTest.java">
+package com.tickets.domain.model;
+
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+
+class TicketTest {
+
+    @Test
+    void testPropiedadesDelModeloTicket() {
+        // Instanciamos la entidad pura del dominio
+        Ticket ticket = new Ticket();
+        ticket.setId(99L);
+        ticket.setDescripcion("Fallo crítico de red");
+        ticket.setEstado("CERRADO");
+
+        // Validamos sus Getters y Setters
+        assertEquals(99L, ticket.getId());
+        assertEquals("Fallo crítico de red", ticket.getDescripcion());
+        assertEquals("CERRADO", ticket.getEstado());
+    }
+}
+</file>
+
+<file path="src/test/java/com/tickets/entrypoints/controller/TicketControllerTest.java">
+package com.tickets.entrypoints.controller;
+
+import com.tickets.application.usecase.CreateTicketUseCase;
+import com.tickets.application.usecase.GetTicketUseCase;
+import com.tickets.domain.model.Ticket;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(TicketController.class)
+class TicketControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    // Debemos declarar como @MockBean TODOS los casos de uso que inyecta el controlador
+    @MockBean
+    private CreateTicketUseCase createTicketUseCase;
+
+    @MockBean
+    private GetTicketUseCase getTicketUseCase;
+
+    @Test
+    void testEndpointCrearTicketDeberiaRetornarStatusOkYElTicketCreado() throws Exception {
+        // 1. Configurar el comportamiento simulado (Mock) del caso de uso
+        Ticket ticketSimulado = new Ticket();
+        ticketSimulado.setId(10L);
+        ticketSimulado.setDescripcion("Problema con la pasarela de pagos");
+        ticketSimulado.setEstado("ABIERTO");
+
+        Mockito.when(createTicketUseCase.createTicket(anyLong(), anyString())).thenReturn(ticketSimulado);
+
+        // 2. Construir el JSON de entrada que espera el @RequestBody
+        String ticketJsonInput = "{\"id\": 10, \"descripcion\": \"Problema con la pasarela de pagos\"}";
+
+        // 3. Simular la petición HTTP POST enviando el JSON
+        mockMvc.perform(post("/tickets")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(ticketJsonInput))
+                .andExpect(status().isOk()) // Valida HTTP 200 OK según tu firma actual
+                .andExpect(jsonPath("$.id").value(10))
+                .andExpect(jsonPath("$.descripcion").value("Problema con la pasarela de pagos"))
+                .andExpect(jsonPath("$.estado").value("ABIERTO"));
+    }
+}
+</file>
+
 <file path="src/test/java/com/tickets/TicketsApplicationTests.java">
 package com.tickets;
 
@@ -1275,6 +1411,299 @@ class TicketsApplicationTests {
 	}
 
 }
+</file>
+
+<file path=".github/dependabot.yml">
+version: 2
+updates:
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+</file>
+
+<file path="docker-compose.yml">
+services:
+  tickets_db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: tickets_db
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres} -d tickets_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+  app:
+    image: ghcr.io/maria0412/evaluacion_2/tickets-app:${IMAGE_TAG:-latest}
+    ports:
+      - "8081:8081"
+    environment:
+      DB_URL: jdbc:postgresql://tickets_db:5432/tickets_db
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      tickets_db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+volumes:
+  postgres_data:
+</file>
+
+<file path="README.md">
+# 🎟️ Microservicio de Tickets - CI/CD con DevOps
+
+Este proyecto corresponde a un microservicio desarrollado en **Java 17** y **Spring Boot**, implementando principios de Arquitectura Hexagonal junto con prácticas modernas de **DevOps**, automatización y contenerización.
+
+El objetivo principal es automatizar completamente el ciclo de vida de la aplicación utilizando **GitHub Actions**, **Docker**, **SonarCloud** y **Docker Compose**.
+
+---
+
+# 🚀 Tecnologías Utilizadas
+
+* Java 17
+* Spring Boot
+* Maven
+* Docker
+* Docker Compose
+* GitHub Actions
+* SonarCloud
+* PostgreSQL
+* GitHub Container Registry (GHCR)
+
+---
+
+# ⚙️ Pipeline CI/CD
+
+El pipeline se ejecuta automáticamente al realizar cambios en la rama principal (`main`) y cuenta con tres etapas principales:
+
+## 🧪 1. Pruebas y Calidad de Código
+
+En esta etapa se ejecutan:
+
+* Pruebas unitarias automatizadas
+* Validación del proyecto con Maven
+* Análisis estáico de código usando SonarCloud
+* Verificación del Quality Gate
+
+Si alguna prueba falla o el análisis de calidad no cumple los requisitos mínimos, el pipeline se detiene automáticamente.
+
+---
+
+## 🐳 2. Construcción de Imagen Docker
+
+La aplicación se empaqueta utilizando Docker mediante una estrategia de **multi-stage build**, permitiendo:
+
+* Reducir el tamaño final de la imagen
+* Mejorar la seguridad
+* Optimizar el despliegue
+
+La imagen generada se publica automáticamente en:
+
+```bash
+ghcr.io/maria0412/evaluacion_2/tickets-app
+```
+
+---
+
+## 📦 3. Despliegue Automatizado
+
+Con Docker Compose se levanta un entorno completo compuesto por:
+
+* `tickets_app`
+* `tickets_db` (PostgreSQL)
+
+El sistema incorpora:
+
+* Restart Policy
+* Límites de memoria y CPU
+* Healthchecks
+* Variables de entorno seguras mediante GitHub Secrets
+
+---
+
+# 🔍 Trazabilidad
+
+Cada despliegue utiliza el identificador único del commit (`github.sha`), permitiendo rastrear exactamente qué versión del código fue desplegada.
+
+---
+
+# ▶️ Ejecución Local
+
+Para levantar el proyecto localmente:
+
+```bash
+docker compose up -d --build
+```
+
+Verificar contenedores activos:
+
+```bash
+docker ps
+```
+
+Ver consumo de recursos:
+
+```bash
+docker stats
+```
+
+---
+
+# 📌 Reflexión
+
+Este proyecto permitió comprender la importancia de DevOps y la automatización dentro del desarrollo moderno de software. Se aprendió cómo integrar pruebas, análisis de calidad, contenerización y despliegue continuo en un mismo flujo automatizado, mejorando la estabilidad, seguridad y trazabilidad de la aplicación.
+</file>
+
+<file path=".github/workflows/ci.yml">
+name: CI/CD Pipeline - Tickets App
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  sonar:
+    name: Tests & SonarCloud Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Dar permisos al wrapper
+        run: chmod +x mvnw
+
+      - name: Ejecutar pruebas unitarias
+        run: ./mvnw test -Dtest=CreateTicketUseCaseTest,GetTicketUseCaseTest,TicketTest,TicketControllerTest
+
+      - name: Publicar reportes de test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-pruebas-unitarias
+          path: target/surefire-reports/
+          retention-days: 5
+
+      - name: Análisis SonarCloud
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          ./mvnw verify sonar:sonar \
+            -Dtest=CreateTicketUseCaseTest,GetTicketUseCaseTest,TicketTest,TicketControllerTest \
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+
+      - name: Subir reporte Jacoco
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report-${{ github.sha }}
+          path: target/site/jacoco/
+
+      - name: Compilar proyecto
+        run: ./mvnw clean package -DskipTests
+
+      - name: Subir artefacto JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: tickets-app-${{ github.sha }}
+          path: target/*.jar
+
+  build-image:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: sonar
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Login a GitHub Packages
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build y Push imagen Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/maria0412/evaluacion_2/tickets-app:latest
+            ghcr.io/maria0412/evaluacion_2/tickets-app:${{ github.sha }}
+
+  deploy:
+    name: Deploy with Docker Compose
+    runs-on: ubuntu-latest
+    needs: build-image
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Login a GitHub Packages
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy via Docker Compose
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Desplegando versión: ${{ github.sha }}"
+          docker compose up -d
+
+      - name: Verificar contenedores activos
+        run: docker ps
 </file>
 
 </files>
